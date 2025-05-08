@@ -1,0 +1,186 @@
+#ifndef TOPOSORTER_H
+#define TOPOSORTER_H
+#include "graph/DGraphModel.h"
+#include "hash/xMap.h"
+#include "list/DLinkedList.h"
+#include "sorting/DLinkedListSE.h"
+#include "sorting/ISort.h"
+#include "stacknqueue/Queue.h"
+#include "stacknqueue/Stack.h"
+template <class T, class V>
+using XHashMap = xMap<T, V>;
+
+
+template<class T>
+class TopoSorter{
+public:
+    static int DFS;
+    static int BFS; 
+    
+protected:
+    DGraphModel<T>* graph;
+    int (*hash_code)(T&, int);
+    
+public:
+    TopoSorter(DGraphModel<T>* graph, int (*hash_code)(T&, int)=0){
+        this->graph = graph;
+        this->hash_code = hash_code;
+    }   
+    DLinkedList<T> sort(int mode=0, bool sorted=true){
+        return mode == BFS ? bfsSort(sorted) : dfsSort(sorted);
+    }
+    
+    DLinkedList<T> bfsSort(bool sorted=true) {
+        DLinkedList<T> result;
+        XHashMap<T, int> inDegree = vertex2inDegree(hash_code);
+        Queue<T> queue;
+        
+        // Lấy danh sách đỉnh theo thứ tự thêm vào ban đầu
+        DLinkedList<T> vertices = graph->vertices();
+        
+        // Thêm các đỉnh có bậc vào = 0 vào queue
+        for(typename DLinkedList<T>::Iterator it = vertices.begin(); 
+            it != vertices.end(); ++it) {
+            if(inDegree.get(*it) == 0) {
+                queue.push(*it);
+            }
+        }
+        
+        while(!queue.empty()) {
+            T current = queue.pop();
+            result.add(current);
+            
+            // getDests đã trả về các đỉnh theo thứ tự thêm cạnh
+            DLinkedList<T> neighbors = getDests(current);
+            
+            // Xử lý các đỉnh kề theo đúng thứ tự trong danh sách kề
+            for(typename DLinkedList<T>::Iterator it = neighbors.begin(); 
+                it != neighbors.end(); ++it) {
+                int newDegree = inDegree.get(*it) - 1;
+                inDegree.put(*it, newDegree);
+                
+                if(newDegree == 0) {
+                    queue.push(*it); // Thêm vào queue theo thứ tự thêm cạnh
+                }
+            }
+        }
+        
+        if(result.size() != vertices.size()) {
+            throw std::runtime_error("Graph contains a cycle");
+        }
+        
+        return result;
+    }
+
+    DLinkedList<T> dfsSort(bool sorted=true) {
+        DLinkedList<T> result;
+        XHashMap<T, int> inDegree = vertex2inDegree(hash_code);
+        DLinkedList<T> vertices = graph->vertices();
+        
+        while(result.size() < vertices.size()) {
+            // Tìm tất cả đỉnh có indegree = 0
+            DLinkedList<T> zeroInDegree;
+            Stack<T> tempStack;  // Stack tạm để đảo ngược thứ tự
+            
+            // Duyệt theo thứ tự ban đầu và đẩy vào stack tạm
+            for(typename DLinkedList<T>::Iterator it = vertices.begin(); 
+                it != vertices.end(); ++it) {
+                if(inDegree.get(*it) == 0) {
+                    tempStack.push(*it);  // Đẩy vào stack để đảo ngược thứ tự
+                }
+            }
+            
+            // Đẩy từ stack tạm sang zeroInDegree để có thứ tự ngược lại
+            while(!tempStack.empty()) {
+                zeroInDegree.add(tempStack.pop());
+            }
+                
+            T current;
+            if(sorted) {
+                // Nếu sorted=true: sắp xếp theo thứ tự tăng dần
+                DLinkedListSE<T> sortedZeroInDegree(zeroInDegree);
+                sortedZeroInDegree.sort(SortSimpleOrder<T>::compare4Ascending);
+                current = *(sortedZeroInDegree.begin());
+            } else {
+                // Nếu sorted=false: lấy đỉnh đầu tiên từ danh sách đã đảo ngược
+                current = *(zeroInDegree.begin());
+            }
+            
+            // Thêm vào kết quả và cập nhật đồ thị
+            result.add(current);
+            inDegree.put(current, -1);
+            
+            // Cập nhật indegree cho các đỉnh kề
+            DLinkedList<T> neighbors = getDests(current);
+            for(typename DLinkedList<T>::Iterator nIt = neighbors.begin(); 
+                nIt != neighbors.end(); nIt++) {
+                int degree = inDegree.get(*nIt);
+                if(degree > 0) {
+                    inDegree.put(*nIt, degree - 1);
+                }
+            }
+        }
+        
+        return result;
+    }
+
+protected:
+
+    //Helper functions
+    XHashMap<T, int> vertex2inDegree(int (*hash)(T&, int)) {
+        XHashMap<T, int> inDegreeMap(hash);
+        DLinkedList<T> vertices = graph->vertices();
+        
+        // Khởi tạo tất cả bậc vào là 0
+        for(typename DLinkedList<T>::Iterator it = vertices.begin(); it != vertices.end(); ++it) {
+            inDegreeMap.put(*it, graph->getInDegree(*it));
+        }
+        
+        return inDegreeMap;
+    }
+    
+    XHashMap<T, int> vertex2outDegree(int (*hash)(T&, int)) {
+        XHashMap<T, int> outDegreeMap(hash);
+        DLinkedList<T> vertices = graph->vertices();
+        
+        // Khởi tạo bậc ra cho mỗi đỉnh
+        for(typename DLinkedList<T>::Iterator it = vertices.begin(); it != vertices.end(); ++it) {
+            outDegreeMap.put(*it, graph->getOutDegree(*it));
+        }
+        
+        return outDegreeMap;
+    }
+
+    DLinkedList<T> listOfZeroInDegrees() {
+        DLinkedList<T> zeroInDegreeList;
+        
+        // Lấy map chứa bậc vào của tất cả các đỉnh
+        XHashMap<T, int> inDegreeMap = vertex2inDegree(hash_code);
+        
+        // Lấy danh sách tất cả các đỉnh
+        DLinkedList<T> vertices = graph->vertices();
+        
+        // Duyệt qua từng đỉnh và kiểm tra bậc vào
+        for(typename DLinkedList<T>::Iterator it = vertices.begin(); it != vertices.end(); ++it) {
+            if(inDegreeMap.get(*it) == 0) {
+                zeroInDegreeList.add(*it);
+            }
+        }
+        
+        return zeroInDegreeList;
+    }
+
+    DLinkedList<T> getDests(T vertex) {
+        return graph->getDestVertices(vertex);
+    }
+
+}; //TopoSorter
+template<class T>
+int TopoSorter<T>::DFS = 0;
+template<class T>
+int TopoSorter<T>::BFS = 1;
+
+/////////////////////////////End of TopoSorter//////////////////////////////////
+
+
+#endif /* TOPOSORTER_H */
